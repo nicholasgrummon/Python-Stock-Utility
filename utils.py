@@ -1,6 +1,8 @@
 import os
+import io
 import smtplib
 import pandas as pd
+import tailer
 
 def mkdir(folderpath, printout=False):
     ''' Create directory at folderpath if not already existing
@@ -51,6 +53,23 @@ def get_lastline(filepath):
     except Exception as e:
         return 0
     
+def get_last_chunk(interval, ticker, chunk_size, dirFilepath):
+    '''Compile the last chunk_size entries without reading entire savefile'''
+    savefile_path = f"{dirFilepath}/Historical/{interval}_history/{ticker}.csv"
+
+    # get savefile headers
+    headers = pd.read_csv(savefile_path, index_col=0, nrows=0).columns.tolist()
+
+    # get most recent chunk of data without reading entire file
+    with open(savefile_path) as f:
+        # TODO: pick more pythonic method than tailer, io
+        chunk = tailer.tail(f, chunk_size)
+
+    chunk_df = pd.read_csv(io.StringIO('\n'.join(chunk)), index_col=0, header=None)
+    chunk_df.columns = headers
+    
+    return chunk_df["Close"].tolist()
+    
 
 class SMS_Server:
     carrier_dict = {
@@ -69,6 +88,11 @@ class SMS_Server:
         self.sender_addr = df.at["sender_addr","Value"]
         self.sender_pwd = df.at["sender_pwd","Value"]
 
+        df = pd.read_csv(f"{dirFilepath}/SMS_Manager/contacts.csv", index_col=0)
+        self.contact_names = df.index
+        self.contact_numbers = df["Number"].astype(str)
+        self.contact_carriers = df["Carrier"].astype(str)
+
     def sendSMS(self, phone_number, carrier, message):
         try:
             recipient_addr = phone_number + "@" + self.carrier_dict[carrier]
@@ -85,3 +109,9 @@ class SMS_Server:
 
         finally:
             self.server.quit()
+    
+    def send_distro(self, msg):
+        for name in self.contact_names:
+            number = self.contact_numbers.loc[name]
+            carrier = self.contact_carriers.loc[name]
+            self.sendSMS(number, carrier, msg)
