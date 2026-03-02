@@ -3,6 +3,7 @@ sys.path.append("/home/ncg/Documents/pythonStockUtility/")
 import utils
 
 # import data handling libraries
+import os
 import pandas as pd
 import yfinance as yf
 
@@ -45,16 +46,17 @@ def update_savefiles(dirFilepath, interval, ticker, printout=False):
     # TODO: edge case when headers but no data
     elif last_entry:
         # construct yfinance datum for newer data only
-        last_date_str = last_entry[0]
-        last_date_dt = date_parser.parse(last_date_str)     # convert str to datetime object
+        earliest_data_dt = datetime.now(nyc) - timedelta(days=7)
+        last_date_dt = date_parser.parse(last_entry[0])
+        last_date_dt = max(earliest_data_dt, last_date_dt)  # cut off interval to avoid search error
 
     # file error
     else:
         return None
     
     # use stock.history attribute for cleaner dataframe
-    # always search for max period, unless more recent last_date_dt
-    data = stock.history(period="max", start=last_date_dt, interval=interval)
+    # default to max period if start date is None
+    data = stock.history(start=last_date_dt, period="max", interval=interval)
     data.reset_index(inplace = True)                # remove date as index
     
     # if interval >= 1d, Change column "Date" to "Datetime"
@@ -66,7 +68,7 @@ def update_savefiles(dirFilepath, interval, ticker, printout=False):
     data["Datetime"] = data["Datetime"].astype(str) # convert timestep object to str
 
     # start=last_date_dt is inclusive, remove redundant result
-    i = data[data["Datetime"] == last_date_str].index
+    i = data[data["Datetime"] == last_date_dt].index
     data = data.drop(i)
 
     # Append to CSV. Note, empty CSV created earlier for first-time write
@@ -75,5 +77,24 @@ def update_savefiles(dirFilepath, interval, ticker, printout=False):
     if printout:
         print(f"{ticker} - {interval} data updated")
 
+
+def convert_savefiles_to_parquet(dirFilepath):
+    path = f"{dirFilepath}/Historical"
+    parquet_basepath = f"{dirFilepath}/Historical_bin"
+
+    for interval in os.listdir(path):
+        interval_path = os.path.join(path,interval)
+
+        if interval[0] != "_" and os.path.isdir(interval_path):
+            for ticker in os.listdir(interval_path):
+                df = pd.read_csv(os.path.join(interval_path, ticker))
+                parquet_path = os.path.join(parquet_basepath,interval,ticker)
+
+                print(parquet_path)
+                # df.to_parquet(parquet_path, engine="pyarrow")
+
+
 if __name__=='__main__':
-    update_savefiles("..")
+    # update_savefiles("..")
+    convert_savefiles_to_parquet(".")
+    
