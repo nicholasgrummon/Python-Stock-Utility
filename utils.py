@@ -42,16 +42,14 @@ def get_lastline(filepath):
 
                 # read one byte at a time
                 if f.read(1) == b'\n':
-                    break
+                    return f.readline().decode('utf-8').strip().split(",")
             
-            # f.read() advances cursor, so return current line as str. Strip spaces, including newline
+            f.seek(0)
             return f.readline().decode('utf-8').strip().split(",")
         
     except FileNotFoundError:
         return -1
-    
-    except Exception as e:
-        return 0
+
     
 def get_last_chunk(interval, ticker, chunk_size, dirFilepath):
     '''Compile the last chunk_size entries without reading entire savefile'''

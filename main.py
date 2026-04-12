@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from datetime import datetime, timedelta
 import pytz
 import time
@@ -9,70 +11,51 @@ import utils
 import Historical.history_utils as hist
 import Evaluation.eval_utils as eval
 
+# GLOBALS
+BASE_DIR = Path(__file__).parent.absolute()
+NYC = pytz.timezone("America/New_York")
+NYSE = mcal.get_calendar("NYSE")
+
+DEFAULT_PERIOD = 365
+
+SENDER = utils.SMS_Server("smtp.gmail.com", 587, BASE_DIR)
+
+def seconds_until_market_open(wait_less=0.99):
+    # get trading schedule today
+    now_dt = datetime.now(NYC)
+    start_day = now_dt.date()
+    end_day = now_dt.date()
+    schedule = NYSE.schedule(start_day, end_day)
+
+    # expand list if currently after trading hours or none exist today
+    while schedule.empty or now_dt > schedule["market_close"].iloc[-1]:
+        end_day += timedelta(days=1)
+        schedule = NYSE.schedule(start_day, end_day)
+
+    # wait until first market_open after now
+    for market_open in schedule["market_open"]:
+        if now_dt < market_open:
+            return round(max(10, wait_less*(market_open - now_dt).total_seconds()))
+        
+        else:
+            return 0
+    
 
 # Execute with: $ nohup python main.py &
 # Kill with: $ kill $(pgrep python)
 def main():
-    # define installation directory
-    dirFilepath = "/home/ncg/Documents/Python_Stock_Utility"
-
-    # Get market calendar for NYSE
-    nyc = pytz.timezone("America/New_York")
-    nyse = mcal.get_calendar("NYSE")
-
-    # get list of stocks to watch
-    watchlist_df = pd.read_csv(f"{dirFilepath}/Positions/Watchlist.csv")
-
-    # initialize lists
-    for ticker in watchlist_df["Ticker"]:
-        for interval in ["1m", "1h", "1d"]:
-            hist.update_savefiles(dirFilepath, interval, ticker, printout=True)
-
-    # create SMS server
-    sender = utils.SMS_Server("smtp.gmail.com", 587, dirFilepath)
-    
-    # main loop
-    # while True:
-    #     # search for next open market day
-    #     today = datetime.now(nyc).date()
-    #     schedule = pd.DataFrame()
-    #     i = 1
-    #     while schedule.empty:
-    #         schedule = nyse.schedule(today, today+timedelta(days=i))
-    #         i += 1
+    while True:
+        wait_time = seconds_until_market_open()
+        if wait_time > 0:
+            print(f"Market Closed: sleeping {wait_time} until next scheduled trading hours")
+            time.sleep(wait_time)
         
-    #     try:
-    #         # TODO: report time that program missed market open by
-    #         # update savefiles once per minute during trading hours
-    #         while nyse.is_open_now(schedule):
-    #             # update savefiles for watchlist
-    #             for ticker in watchlist_df["Ticker"]:
-    #                 for interval in ["1m", "1h", "1d"]:
-    #                     hist.update_savefiles(dirFilepath, interval, ticker, printout=True)
+        else:
+            watchlist_df = pd.read_csv(f"{BASE_DIR}/Positions/Watchlist.csv")
+            hist.touch_savefile(BASE_DIR, watchlist_df)
+            hist.update_savefiles(BASE_DIR, watchlist_df, printout=True)
+            time.sleep(60 - datetime.now().second)
 
-    #                     # Evaluate market indicators
-    #                     chunk = utils.get_last_chunk(interval, ticker, 50, dirFilepath)
-                        
-    #                     # eval.update_indicators(interval, ticker, chunk)
-    #                     signal = eval.buy_sell_indicator(chunk)
-                        
-    #                     # Send buy/signal
-    #                     if signal:
-    #                         sender.send_distro(f"{signal} signal acquired for {ticker} on {interval} data")
-
-    #             # pause until next minute
-    #             time.sleep(60 - datetime.now().second)
-        
-    #     except Exception:
-    #         # today has trading hours but now() is before market open
-    #         pass
-
-    #     finally:
-    #         # wait until the next scheduled trading hours
-    #         for open_time in schedule["market_open"]:
-    #             if open_time > datetime.now(nyc):
-    #                 print(f"Market Closed: sleeping {open_time - datetime.now(nyc)} until next scheduled trading hours")
-    #                 time.sleep((open_time - datetime.now(nyc)).total_seconds())
 
 if __name__=='__main__':
     main()

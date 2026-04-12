@@ -11,9 +11,48 @@ import yfinance as yf
 from datetime import datetime, timedelta
 from dateutil import parser as date_parser
 import pytz
-nyc = pytz.timezone("America/New_York")
 
-def update_savefiles(dirFilepath, interval, ticker, printout=False):
+SAVEFILE_HEADER = ["Datetime","Open","High","Low","Close","Volume","Dividends","Stock Splits","Capital Gains"]
+NYC = pytz.timezone("America/New_York")
+
+
+def touch_savefile(base_dir, watchlist_df):
+    for ticker in watchlist_df["Ticker"]:
+        for interval in ["1m", "1h", "1d"]:
+            savefolder_path = os.path.join(base_dir, f"Historical/{interval}_history")
+            os.makedirs(savefolder_path, exist_ok=True)
+            savefile_path = os.path.join(savefolder_path, f"{ticker}.csv")
+            if not os.path.isfile(savefile_path):
+                df = pd.DataFrame(columns=SAVEFILE_HEADER)
+                df.to_csv(savefile_path, index=False)
+
+
+def get_start_search(savefile_path, default_period):
+    # TODO: add in try/except checking for last_entry formatting. For now, assume correct
+    last_entry = utils.get_lastline(savefile_path)
+    try:
+        default_search_dt = datetime.now(NYC) - timedelta(days=default_period)
+        last_entry_dt = date_parser.parse(last_entry[0])
+        return max(last_entry_dt, default_search_dt)
+    
+    except Exception as e:
+        return None
+        
+
+def get_yf_data(stock, start_search_dt, interval):
+    data = stock.history(start=start_search_dt, interval=interval)
+    if data.empty:
+        data = stock.history(period="max", interval=interval)
+
+    # clean data
+    data.reset_index(inplace=True)
+    if "Date" in data.columns:
+        data = data.rename(columns={"Date":"Datetime"})
+    
+    return data.drop(data[data["Datetime"] == start_search_dt].index)
+
+
+def update_savefiles(base_dir, watchlist_df, default_period=365, printout=False):
     '''
     Collect historical data for specified stock.
     - Write new savefile with max history if no data saved
@@ -21,61 +60,17 @@ def update_savefiles(dirFilepath, interval, ticker, printout=False):
 
     Pass dirFilepath to allow project to be installed s
     '''
-    # download yfinance object for specified ticker
-    stock = yf.Ticker(ticker)
+    for ticker in watchlist_df["Ticker"]:
+        for interval in ["1m", "1h", "1d"]:
+            savefolder_path = os.path.join(base_dir, f"Historical/{interval}_history")
+            savefile_path = os.path.join(savefolder_path, f"{ticker}.csv")
 
-    # construct savefile location
-    savefolder_path = utils.mkdir(f"{dirFilepath}/Historical/{interval}_history")
-    savefile_path = f"{savefolder_path}/{ticker}.csv"
-
-    # get last entry in savefile
-    # TODO: add in try/except checking for last_entry formatting. For now, assume correct
-    last_entry = utils.get_lastline(savefile_path)
-    
-    # no stock history
-    if last_entry == -1:
-        # create file for stock history
-        df = pd.DataFrame(columns=["Datetime","Open","High","Low","Close","Volume","Dividends","Stock Splits","Capital Gains"])
-        df.to_csv(savefile_path, index=False)
-
-        # construct dummy yfinance datum for max period
-        last_date_str = ""
-        last_date_dt = None
-    
-    # stock history exists
-    # TODO: edge case when headers but no data
-    elif last_entry:
-        # construct yfinance datum for newer data only
-        earliest_data_dt = datetime.now(nyc) - timedelta(days=7)
-        last_date_dt = date_parser.parse(last_entry[0])
-        last_date_dt = max(earliest_data_dt, last_date_dt)  # cut off interval to avoid search error
-
-    # file error
-    else:
-        return None
-    
-    # use stock.history attribute for cleaner dataframe
-    # default to max period if start date is None
-    data = stock.history(start=last_date_dt, period="max", interval=interval)
-    data.reset_index(inplace = True)                # remove date as index
-    
-    # if interval >= 1d, Change column "Date" to "Datetime"
-    try:
-        data = data.rename(columns={"Date":"Datetime"})
-    except Exception:
-        pass
-
-    data["Datetime"] = data["Datetime"].astype(str) # convert timestep object to str
-
-    # start=last_date_dt is inclusive, remove redundant result
-    i = data[data["Datetime"] == last_date_dt].index
-    data = data.drop(i)
-
-    # Append to CSV. Note, empty CSV created earlier for first-time write
-    data.to_csv(savefile_path, mode='a', index=False, header=False)
-
-    if printout:
-        print(f"{ticker} - {interval} data updated")
+            stock = yf.Ticker(ticker)
+            start_search_dt = get_start_search(savefile_path, default_period)
+            data = get_yf_data(stock, start_search_dt, interval)
+            data.to_csv(savefile_path, mode='a', index=False, header=False)
+            if printout:
+                print(f"{ticker} - {interval} data updated")
 
 
 def convert_savefiles_to_parquet(dirFilepath):

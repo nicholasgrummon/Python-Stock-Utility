@@ -14,6 +14,18 @@ def moving_avg(data_hist, period):
     
     return mavg
 
+def XmR(data_hist):
+    k = len(data_hist)
+    x_bar = sum(data_hist) / k
+    mR = sum([float(data_hist[i+1] - data_hist[i]) for i in range(k - 1)]) / (k-1)
+
+    E = np.sqrt(sum([float(data_hist[i+1] - data_hist[i])**2 for i in range(k - 1)]))
+    
+    upper_limit = x_bar + E*mR
+    lower_limit = x_bar - E*mR
+
+    print(upper_limit, lower_limit)
+
 def fibonacci_support_delta(swing, lvl):
     '''
     Determines support levels at given price using fibonacci replacement approach
