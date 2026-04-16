@@ -3,6 +3,8 @@ import io
 import smtplib
 import pandas as pd
 import tailer
+from datetime import datetime, timedelta
+import pytz
 
 def mkdir(folderpath, printout=False):
     ''' Create directory at folderpath if not already existing
@@ -68,6 +70,23 @@ def get_last_chunk(interval, ticker, chunk_size, dirFilepath):
     
     return chunk_df["Close"].tolist()
     
+
+def seconds_until_market_open(market, tz=pytz.timezone("America/New_York"), wait_less=0.99):
+    # get trading schedule today
+    now_dt = datetime.now(tz)
+    start_day = now_dt.date()
+    end_day = now_dt.date()
+    schedule = market.schedule(start_day, end_day)
+
+    # expand list if currently after trading hours or none exist today
+    while schedule.empty or now_dt > schedule["market_close"].iloc[-1]:
+        start_day += timedelta(days=1)
+        end_day += timedelta(days=1)
+        schedule = market.schedule(start_day, end_day)
+    
+
+    return round(max(0, wait_less*(schedule["market_open"].iloc[0] - now_dt).total_seconds()))
+        
 
 class SMS_Server:
     carrier_dict = {

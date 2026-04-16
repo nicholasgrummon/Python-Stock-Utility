@@ -27,7 +27,7 @@ def touch_savefile(base_dir, watchlist_df):
                 df.to_csv(savefile_path, index=False)
 
 
-def get_start_search(savefile_path, default_period):
+def get_start_search(savefile_path, default_period=365):
     # TODO: add in try/except checking for last_entry formatting. For now, assume correct
     last_entry = utils.get_lastline(savefile_path)
     try:
