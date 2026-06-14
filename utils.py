@@ -3,6 +3,7 @@ import io
 import smtplib
 import pandas as pd
 import tailer
+from dotenv import load_dotenv
 from datetime import datetime, timedelta
 import pytz
 
@@ -53,22 +54,35 @@ def get_lastline(filepath):
         return -1
 
     
-def get_last_chunk(interval, ticker, chunk_size, dirFilepath):
+def get_last_chunk_df(interval, ticker, chunk_size, dirFilepath):
     '''Compile the last chunk_size entries without reading entire savefile'''
     savefile_path = f"{dirFilepath}/Historical/{interval}_history/{ticker}.csv"
 
-    # get savefile headers
-    headers = pd.read_csv(savefile_path, index_col=0, nrows=0).columns.tolist()
-
-    # get most recent chunk of data without reading entire file
     with open(savefile_path) as f:
+        header_line = f.readline().strip()
         # TODO: pick more pythonic method than tailer, io
         chunk = tailer.tail(f, chunk_size)
 
+    # tailer returns the header row too if the file has fewer than chunk_size data rows
+    if chunk and chunk[0] == header_line:
+        chunk = chunk[1:]
+
+    headers = header_line.split(",")[1:]
+    if not chunk:
+        return pd.DataFrame(columns=headers)
+
     chunk_df = pd.read_csv(io.StringIO('\n'.join(chunk)), index_col=0, header=None)
-    chunk_df.columns = headers
-    
-    return chunk_df["Close"].tolist()
+    # data rows may have fewer trailing columns than the header (e.g. yfinance
+    # sometimes omits "Capital Gains"), so only assign the leading headers that
+    # correspond to columns actually present
+    chunk_df.columns = headers[:chunk_df.shape[1]]
+
+    return chunk_df
+
+
+def get_last_chunk(interval, ticker, chunk_size, dirFilepath):
+    '''Compile the last chunk_size Close prices without reading entire savefile'''
+    return get_last_chunk_df(interval, ticker, chunk_size, dirFilepath)["Close"].tolist()
     
 
 def seconds_until_market_open(market, tz=pytz.timezone("America/New_York"), wait_less=0.99):
@@ -101,9 +115,9 @@ class SMS_Server:
         self.port = port
         self.dirFilepath = dirFilepath
 
-        df = pd.read_csv(f"{dirFilepath}/SMS_Manager/sender_details.csv", index_col=0)
-        self.sender_addr = df.at["sender_addr","Value"]
-        self.sender_pwd = df.at["sender_pwd","Value"]
+        load_dotenv(f"{dirFilepath}/.env")
+        self.sender_addr = os.environ["GMAIL_ADDR"]
+        self.sender_pwd = os.environ["GMAIL_APP_PASSWORD"]
 
         df = pd.read_csv(f"{dirFilepath}/SMS_Manager/contacts.csv", index_col=0)
         self.contact_names = df.index

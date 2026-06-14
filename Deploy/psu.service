@@ -1,0 +1,14 @@
+[Unit]
+Description=Python Stock Utility - market data + signal monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ncg/Documents/6_Projects/Python_Stock_Utility
+ExecStart=/home/ncg/Documents/6_Projects/Python_Stock_Utility/.psu_venv/bin/python main.py
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target
