@@ -40,16 +40,28 @@ def get_start_search(savefile_path, default_period=365):
         
 
 def get_yf_data(stock, start_search_dt, interval):
-    data = stock.history(start=start_search_dt, interval=interval)
-    if data.empty:
+    if start_search_dt is None:
+        # no history saved yet — fetch the maximum available from yfinance
         data = stock.history(period="max", interval=interval)
+    else:
+        data = stock.history(start=start_search_dt, interval=interval)
+        # if empty, there is simply no new data (e.g. today's daily bar is still open);
+        # return early rather than falling back to period="max" which re-downloads all history
+        if data.empty:
+            return data
 
     # clean data
     data.reset_index(inplace=True)
     if "Date" in data.columns:
         data = data.rename(columns={"Date":"Datetime"})
-    
-    return data.drop(data[data["Datetime"] == start_search_dt].index)
+
+    if start_search_dt is not None:
+        # keep only rows strictly newer than the last saved entry;
+        # normalize both sides to UTC to avoid timezone-representation mismatches
+        cutoff = pd.Timestamp(start_search_dt).tz_convert("UTC")
+        data = data[data["Datetime"].dt.tz_convert("UTC") > cutoff]
+
+    return data
 
 
 def update_savefiles(base_dir, watchlist_df, default_period=365, printout=False):
