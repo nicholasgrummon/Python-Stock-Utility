@@ -12,6 +12,8 @@ import pandas_market_calendars as mcal
 import utils
 import Historical.history_utils as hist
 import Evaluation.eval_utils as eval_utils
+import Evaluation.indicator_utils as ind_utils
+import Evaluation.gen_dashboard as gen_dash
 
 # GLOBALS
 BASE_DIR = Path(__file__).parent.absolute()
@@ -92,6 +94,8 @@ def main():
 
             hist.touch_savefile(BASE_DIR, watchlist_df)
             hist.update_savefiles(BASE_DIR, watchlist_df, default_period=DEFAULT_PERIOD)
+            if ind_utils.update_indicator_csvs(BASE_DIR, watchlist_df):
+                gen_dash.generate_dashboard(BASE_DIR)
             check_signals(watchlist_df, holdings, last_signals)
 
         except Exception:

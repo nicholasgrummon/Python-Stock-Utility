@@ -4,5 +4,6 @@ __pycache__
 .psu_venv/*
 Playground/*
 Historical/*/*
+Evaluation/*/*
 Logs/*
 .env
