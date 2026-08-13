@@ -1,9 +1,7 @@
 import os
 import io
-import smtplib
 import pandas as pd
 import tailer
-from dotenv import load_dotenv
 from datetime import datetime, timedelta
 import pytz
 
@@ -100,49 +98,3 @@ def seconds_until_market_open(market, tz=pytz.timezone("America/New_York"), wait
     
 
     return round(max(0, wait_less*(schedule["market_open"].iloc[0] - now_dt).total_seconds()))
-        
-
-class SMS_Server:
-    carrier_dict = {
-        "ATT":"txt.att.net",
-        "Boost":"myboostmobile.com",
-        "Verizon":"vtext.com",
-        "TMobile":"tmomail.net"
-    }
-
-    def __init__(self, smtp_server, port, dirFilepath):
-        self.smtp_server = smtp_server
-        self.port = port
-        self.dirFilepath = dirFilepath
-
-        load_dotenv(f"{dirFilepath}/.env")
-        self.sender_addr = os.environ["GMAIL_ADDR"]
-        self.sender_pwd = os.environ["GMAIL_APP_PASSWORD"]
-
-        df = pd.read_csv(f"{dirFilepath}/SMS_Manager/contacts.csv", index_col=0)
-        self.contact_names = df.index
-        self.contact_numbers = df["Number"].astype(str)
-        self.contact_carriers = df["Carrier"].astype(str)
-
-    def sendSMS(self, phone_number, carrier, message):
-        try:
-            recipient_addr = phone_number + "@" + self.carrier_dict[carrier]
-            
-            self.server = smtplib.SMTP(self.smtp_server, self.port)
-            self.server.starttls()
-            self.server.ehlo()
-            self.server.login(self.sender_addr, self.sender_pwd)
-
-            self.server.sendmail(self.sender_addr, recipient_addr, message)
-        
-        except Exception as e:
-            print(e)
-
-        finally:
-            self.server.quit()
-    
-    def send_distro(self, msg):
-        for name in self.contact_names:
-            number = self.contact_numbers.loc[name]
-            carrier = self.contact_carriers.loc[name]
-            self.sendSMS(number, carrier, msg)

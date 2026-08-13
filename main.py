@@ -11,9 +11,10 @@ import pandas_market_calendars as mcal
 
 import utils
 import Historical.history_utils as hist
-import Evaluation.eval_utils as eval_utils
 import Evaluation.indicator_utils as ind_utils
 import Evaluation.gen_dashboard as gen_dash
+import Notifications.discord_utils as discord_utils
+import Notifications.discord_bot as discord_bot
 
 # GLOBALS
 BASE_DIR = Path(__file__).parent.absolute()
@@ -21,8 +22,6 @@ NYC = pytz.timezone("America/New_York")
 NYSE = mcal.get_calendar("NYSE")
 
 DEFAULT_PERIOD = 365
-SIGNAL_INTERVAL = "1d"
-SIGNAL_LOOKBACK = 100 # bars of warm-up needed for SMA(50)/ADX(14)
 
 LOG_DIR = BASE_DIR / "Logs"
 LOG_DIR.mkdir(exist_ok=True)
@@ -37,7 +36,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger("psu")
 
-SENDER = utils.SMS_Server("smtp.gmail.com", 587, BASE_DIR)
+NOTIFIER = discord_utils.DiscordNotifier(BASE_DIR)
+if NOTIFIER.enabled:
+    discord_bot.run_in_background(BASE_DIR, NOTIFIER.token, NOTIFIER.channel_id)
 
 
 def load_holdings(base_dir):
@@ -48,39 +49,11 @@ def load_holdings(base_dir):
         return set()
 
 
-def check_signals(watchlist_df, holdings, last_signals):
-    '''
-    Evaluate the combined Buy/Sell/Hold signal for each watchlisted ticker and SMS the
-    distro list when a signal changes. Sell alerts are only sent for held positions.
-    '''
-    for ticker in watchlist_df["Ticker"]:
-        try:
-            history_df = utils.get_last_chunk_df(SIGNAL_INTERVAL, ticker, SIGNAL_LOOKBACK, BASE_DIR)
-            signal = eval_utils.evaluate_signal(history_df)
-        except Exception:
-            logger.exception(f"Failed to evaluate signal for {ticker}")
-            continue
-
-        prev_signal = last_signals.get(ticker)
-        last_signals[ticker] = signal
-
-        if signal == prev_signal:
-            continue
-
-        logger.info(f"{ticker}: signal changed {prev_signal} -> {signal}")
-
-        if signal == "Buy":
-            SENDER.send_distro(f"{ticker}: BUY signal")
-
-        elif signal == "Sell" and ticker in holdings:
-            SENDER.send_distro(f"{ticker}: SELL signal")
-
-
 # Execute with: $ nohup python main.py &
 # Kill with: $ kill $(pgrep -f main.py)
 # Or install Deploy/psu.service as a systemd user service for managed restarts
 def main():
-    last_signals = {}
+    last_tiers = {}
 
     while True:
         wait_time = utils.seconds_until_market_open(NYSE)
@@ -91,12 +64,15 @@ def main():
         try:
             watchlist_df = pd.read_csv(BASE_DIR / "Positions/Watchlist.csv")
             holdings = load_holdings(BASE_DIR)
+            tickers = watchlist_df["Ticker"]
 
             hist.touch_savefile(BASE_DIR, watchlist_df)
             hist.update_savefiles(BASE_DIR, watchlist_df, default_period=DEFAULT_PERIOD)
             if ind_utils.update_indicator_csvs(BASE_DIR, watchlist_df):
                 gen_dash.generate_dashboard(BASE_DIR)
-            check_signals(watchlist_df, holdings, last_signals)
+
+            discord_utils.check_rating_alerts(BASE_DIR, tickers, NOTIFIER, last_tiers, holdings)
+            discord_utils.maybe_send_weekly_summary(BASE_DIR, tickers, NOTIFIER)
 
         except Exception:
             logger.exception("Error in main loop")
