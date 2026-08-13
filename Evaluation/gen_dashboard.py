@@ -109,6 +109,18 @@ tbody td:first-child{text-align:left;color:var(--mu)}
 tbody tr:last-child td{border-bottom:none}
 tbody tr:hover td{background:var(--tbg)}
 .foot{margin-top:20px;padding-top:12px;border-top:1px solid var(--bd);font-family:'SF Mono','Fira Code','Cascadia Code','Consolas',monospace;font-size:10px;color:var(--mu);letter-spacing:.02em}
+.rt-cell{display:flex;align-items:center;justify-content:flex-end;gap:7px}
+.rt-val{font-weight:700;width:26px;text-align:right;font-variant-numeric:tabular-nums}
+.rt-bar{width:54px;height:6px;border-radius:3px;background:var(--gr);overflow:hidden;flex-shrink:0}
+.rt-fill{height:100%;border-radius:3px}
+.sig{font-family:'SF Mono','Fira Code','Cascadia Code','Consolas',monospace;font-size:9px;font-weight:700;letter-spacing:.05em;padding:2px 6px;border-radius:2px;white-space:nowrap}
+.sig.sb{background:var(--zg);color:var(--rg)}
+.sig.b{background:var(--zg);color:var(--rg);opacity:.65}
+.sig.h{background:var(--sf2);color:var(--mu)}
+.sig.s{background:var(--zb);color:var(--rb);opacity:.65}
+.sig.ss{background:var(--zb);color:var(--rb)}
+.hrow{cursor:pointer}
+.hrow:hover td{background:var(--tbg)}
 </style>
 
 <div class="app">
@@ -117,7 +129,7 @@ tbody tr:hover td{background:var(--tbg)}
     <span class="sep">|</span>
     <div class="tabs" id="tabs"></div>
     <div class="spacer"></div>
-    <div class="rbts">
+    <div class="rbts" id="rbts">
       <button class="rbt" data-r="3m">3M</button>
       <button class="rbt" data-r="1y">1Y</button>
       <button class="rbt on" data-r="3y">3Y</button>
@@ -125,47 +137,65 @@ tbody tr:hover td{background:var(--tbg)}
     </div>
   </div>
 
-  <div class="slab">
-    <span class="stitle">Price &amp; Moving Averages</span>
-    <div class="leg">
-      <span class="li"><span class="ls" style="background:var(--c1)"></span>Close</span>
-      <span class="li"><span class="ls" style="background:var(--c2)"></span>SMA 20</span>
-      <span class="li"><span class="ls" style="background:var(--c3)"></span>SMA 50</span>
+  <div class="home" id="homeView">
+    <div class="slab">
+      <span class="stitle">Buy / Sell Rating</span>
+      <span class="sdesc">0 = Sell · 10 = Strong Buy · Blends RSI, Bollinger %B and SMA20/50 spread as oversold/undervalued signals, damped by ADX trend strength</span>
     </div>
-    <span class="sdesc">SMA 20/50 crossover signals trend change</span>
+    <div class="tbw" style="max-height:none">
+      <table>
+        <thead><tr>
+          <th>Ticker</th><th>Close</th><th>Rating</th><th>Signal</th>
+          <th>RSI</th><th>%B</th><th>SMA 20</th><th>SMA 50</th><th>ADX</th>
+        </tr></thead>
+        <tbody id="hbd"></tbody>
+      </table>
+    </div>
   </div>
-  <div class="cw cw-lg"><canvas id="c-sma"></canvas><span class="tkbadge" id="tkb"></span></div>
 
-  <div class="slab">
-    <span class="stitle">RSI · 14</span>
-    <span class="sdesc">Zone &lt;30 oversold · Zone &gt;70 overbought</span>
-  </div>
-  <div class="cw cw-sm"><canvas id="c-rsi"></canvas></div>
+  <div id="chartsView" hidden>
+    <div class="slab">
+      <span class="stitle">Price &amp; Moving Averages</span>
+      <div class="leg">
+        <span class="li"><span class="ls" style="background:var(--c1)"></span>Close</span>
+        <span class="li"><span class="ls" style="background:var(--c2)"></span>SMA 20</span>
+        <span class="li"><span class="ls" style="background:var(--c3)"></span>SMA 50</span>
+      </div>
+      <span class="sdesc">SMA 20/50 crossover signals trend change</span>
+    </div>
+    <div class="cw cw-lg"><canvas id="c-sma"></canvas><span class="tkbadge" id="tkb"></span></div>
 
-  <div class="slab">
-    <span class="stitle">Bollinger Bands · SMA 20 ± 2σ</span>
-    <span class="sdesc">Shaded band = ±2 std dev · Price outside band signals over/undervalued</span>
-  </div>
-  <div class="cw cw-sm"><canvas id="c-bb"></canvas></div>
+    <div class="slab">
+      <span class="stitle">RSI · 14</span>
+      <span class="sdesc">Zone &lt;30 oversold · Zone &gt;70 overbought</span>
+    </div>
+    <div class="cw cw-sm"><canvas id="c-rsi"></canvas></div>
 
-  <div class="slab">
-    <span class="stitle">ADX · 14</span>
-    <span class="sdesc">Below 20 = no directional trend · 25+ = developing · 40+ = strong</span>
-  </div>
-  <div class="cw cw-sm"><canvas id="c-adx"></canvas></div>
+    <div class="slab">
+      <span class="stitle">Bollinger Bands · SMA 20 ± 2σ</span>
+      <span class="sdesc">Shaded band = ±2 std dev · Price outside band signals over/undervalued</span>
+    </div>
+    <div class="cw cw-sm"><canvas id="c-bb"></canvas></div>
 
-  <div class="tbtrig" id="tbtrig" role="button" tabindex="0" aria-expanded="false">
-    <span class="tbtrig-arrow" id="tbarr">&#9658;</span>
-    <span class="tbtrig-lbl">Data Table</span>
-  </div>
-  <div class="tbw" id="tbw" hidden>
-    <table>
-      <thead><tr>
-        <th>Date</th><th>Close</th><th>SMA 20</th><th>SMA 50</th>
-        <th>RSI</th><th>BB Low</th><th>BB High</th><th>ADX</th>
-      </tr></thead>
-      <tbody id="tbd"></tbody>
-    </table>
+    <div class="slab">
+      <span class="stitle">ADX · 14</span>
+      <span class="sdesc">Below 20 = no directional trend · 25+ = developing · 40+ = strong</span>
+    </div>
+    <div class="cw cw-sm"><canvas id="c-adx"></canvas></div>
+
+    <div class="tbtrig" id="tbtrig" role="button" tabindex="0" aria-expanded="false">
+      <span class="tbtrig-arrow" id="tbarr">&#9658;</span>
+      <span class="tbtrig-lbl">Data Table</span>
+    </div>
+    <div class="tbw" id="tbw" hidden>
+      <table>
+        <thead><tr>
+          <th>Date</th><th>Close</th><th>SMA 20</th><th>SMA 50</th>
+          <th>RSI</th><th>BB Low</th><th>BB High</th><th>ADX</th>
+        </tr></thead>
+        <tbody id="tbd"></tbody>
+      </table>
+    </div>
   </div>
 
   <p class="foot" id="foot"></p>
@@ -181,29 +211,95 @@ const GENERATED = "@@GENERATED@@";
 document.getElementById('foot').textContent =
   'Source: yfinance · Evaluation/Indicators/{ticker}_indicators.csv · Generated ' + GENERATED;
 
-let ticker = TICKERS[0], range = '3y', hov = -1;
+let ticker = null, range = '3y', hov = -1, view = 'home';
 
-// ── Ticker tabs ─────────────────────────────────────────────────────────────
+// ── Tabs (Home + one per ticker) ─────────────────────────────────────────────
+function setActiveTab(key){
+  document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x.dataset.t === key));
+}
+function showHome(){
+  view = 'home'; setActiveTab('__home__');
+  document.getElementById('rbts').style.display = 'none';
+  document.getElementById('chartsView').hidden = true;
+  document.getElementById('homeView').hidden = false;
+  renderHome();
+}
+function showTicker(t){
+  view = 'ticker'; ticker = t; hov = -1; setActiveTab(t);
+  document.getElementById('tkb').textContent = t;
+  document.getElementById('rbts').style.display = 'flex';
+  document.getElementById('homeView').hidden = true;
+  document.getElementById('chartsView').hidden = false;
+  renderAll(); renderTable();
+}
+
 const tabsEl = document.getElementById('tabs');
+const homeBtn = document.createElement('button');
+homeBtn.className = 'tab on'; homeBtn.dataset.t = '__home__'; homeBtn.textContent = 'Home';
+homeBtn.onclick = showHome;
+tabsEl.appendChild(homeBtn);
 TICKERS.forEach(t => {
   const b = document.createElement('button');
-  b.className = 'tab' + (t === ticker ? ' on' : '');
-  b.dataset.t = t; b.textContent = t;
-  b.onclick = () => {
-    ticker = t; hov = -1;
-    document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x.dataset.t === t));
-    document.getElementById('tkb').textContent = t;
-    renderAll(); renderTable();
-  };
+  b.className = 'tab'; b.dataset.t = t; b.textContent = t;
+  b.onclick = () => showTicker(t);
   tabsEl.appendChild(b);
 });
-document.getElementById('tkb').textContent = ticker;
 
 document.querySelectorAll('.rbt').forEach(b => b.onclick = () => {
   range = b.dataset.r; hov = -1;
   document.querySelectorAll('.rbt').forEach(x => x.classList.toggle('on', x.dataset.r === range));
   renderAll(); renderTable();
 });
+
+// ── Buy/sell rating ──────────────────────────────────────────────────────────
+function clamp(v,lo,hi){ return Math.max(lo, Math.min(hi, v)); }
+function lastValid(arr){
+  for (let i = arr.length - 1; i >= 0; i--) if (arr[i] != null) return arr[i];
+  return null;
+}
+// Mean-reversion blend: oversold RSI, price near the lower Bollinger band, and
+// SMA20 pulled below SMA50 all read as "buy the dip". ADX dampens the read
+// toward neutral when a strong prevailing trend makes fading it riskier.
+function rating(t){
+  const d = DATA[t];
+  const close = lastValid(d.c), sma20 = lastValid(d.s20), sma50 = lastValid(d.s50);
+  const rsi = lastValid(d.rsi), bbl = lastValid(d.bbl), bbu = lastValid(d.bbu), adx = lastValid(d.adx);
+  const rsiS = rsi != null ? clamp(10 - rsi/10, 0, 10) : 5;
+  const pctB = (bbl != null && bbu != null && bbu > bbl) ? (close - bbl) / (bbu - bbl) : 0.5;
+  const bbS = clamp(10 * (1 - pctB), 0, 10);
+  const spread = (sma20 != null && sma50) ? (sma20 - sma50) / sma50 * 100 : 0;
+  const smaS = clamp(5 - spread * 1.5, 0, 10);
+  const raw = rsiS*0.4 + bbS*0.3 + smaS*0.3;
+  const conv = adx != null ? clamp(1 - (adx - 20)/40, 0.4, 1) : 1;
+  const val = Math.round(clamp(5 + (raw - 5)*conv, 0, 10) * 2) / 2;
+  return {close, rsi, pctB, sma20, sma50, adx, val};
+}
+function sigInfo(v){
+  if (v >= 7.5) return {cls:'sb', lbl:'STRONG BUY'};
+  if (v >= 6)   return {cls:'b',  lbl:'BUY'};
+  if (v > 4)    return {cls:'h',  lbl:'HOLD'};
+  if (v >= 2.5) return {cls:'s',  lbl:'SELL'};
+  return {cls:'ss', lbl:'STRONG SELL'};
+}
+function renderHome(){
+  const rows = TICKERS.map(t => ({t, ...rating(t)})).sort((a,b) => b.val - a.val);
+  document.getElementById('hbd').innerHTML = rows.map(r => {
+    const si = sigInfo(r.val), pct = clamp(r.val/10, 0, 1) * 100;
+    const fillCol = r.val >= 5 ? 'var(--rg)' : 'var(--rb)';
+    return `<tr class="hrow" data-t="${r.t}">
+      <td>${r.t}</td>
+      <td>${f$(r.close)}</td>
+      <td><div class="rt-cell"><span class="rt-val">${r.val.toFixed(1)}</span><div class="rt-bar"><div class="rt-fill" style="width:${pct}%;background:${fillCol}"></div></div></div></td>
+      <td><span class="sig ${si.cls}">${si.lbl}</span></td>
+      <td>${f1(r.rsi)}</td>
+      <td>${r.pctB != null ? (r.pctB*100).toFixed(0)+'%' : '--'}</td>
+      <td>${f$(r.sma20)}</td>
+      <td>${f$(r.sma50)}</td>
+      <td>${f1(r.adx)}</td>
+    </tr>`;
+  }).join('');
+  document.querySelectorAll('.hrow').forEach(tr => tr.onclick = () => showTicker(tr.dataset.t));
+}
 
 // ── Slice helper ────────────────────────────────────────────────────────────
 function slc() {
@@ -474,11 +570,12 @@ tbtrig.addEventListener('click',function(){
 tbtrig.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();tbtrig.click();}});
 
 // ── Theme + resize ───────────────────────────────────────────────────────────
-window.matchMedia('(prefers-color-scheme:dark)').addEventListener('change',renderAll);
-new MutationObserver(renderAll).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
-let rt; window.addEventListener('resize',()=>{clearTimeout(rt);rt=setTimeout(renderAll,80);});
+function renderIfVisible(){ if(view==='ticker') renderAll(); }
+window.matchMedia('(prefers-color-scheme:dark)').addEventListener('change',renderIfVisible);
+new MutationObserver(renderIfVisible).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
+let rt; window.addEventListener('resize',()=>{clearTimeout(rt);rt=setTimeout(()=>{ if(view==='ticker') renderAll(); },80);});
 
-renderAll();
+showHome();
 </script>
 """
 

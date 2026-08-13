@@ -64,6 +64,17 @@ def get_yf_data(stock, start_search_dt, interval):
     return data
 
 
+def _dedup_file(savefile_path):
+    """Deduplicate a CSV in-place, keeping the last row for each Datetime value."""
+    df = pd.read_csv(savefile_path)
+    before = len(df)
+    df.drop_duplicates(subset="Datetime", keep="last", inplace=True)
+    if len(df) < before:
+        df.to_csv(savefile_path, index=False)
+        return before - len(df)
+    return 0
+
+
 def update_savefiles(base_dir, watchlist_df, default_period=365, printout=False):
     '''
     Collect historical data for specified stock.
@@ -80,7 +91,17 @@ def update_savefiles(base_dir, watchlist_df, default_period=365, printout=False)
             stock = yf.Ticker(ticker)
             start_search_dt = get_start_search(savefile_path, default_period)
             data = get_yf_data(stock, start_search_dt, interval)
+            if data.empty:
+                continue
             data.to_csv(savefile_path, mode='a', index=False, header=False)
+            # Safety net: deduplicate after each write to catch any timezone or
+            # yfinance edge cases before they accumulate
+            removed = _dedup_file(savefile_path)
+            if removed:
+                import logging
+                logging.getLogger(__name__).warning(
+                    f"{ticker} {interval}: removed {removed} duplicate rows after write"
+                )
             if printout:
                 print(f"{ticker} - {interval} data updated")
 
