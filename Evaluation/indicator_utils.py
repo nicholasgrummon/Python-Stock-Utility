@@ -128,8 +128,7 @@ def _update_ticker_indicators(ticker, base_dir):
 
     # No indicator file yet → full backlog
     if not ind_path.exists() or last_ind_dt is None:
-        _backlog_full(hist_df.rename(columns={"_dt": "Datetime"})
-                      .assign(Datetime=dt_strs), ind_path)
+        _backlog_full(hist_df, ind_path)
         return True
 
     # Incremental: find rows newer than last indicator entry
