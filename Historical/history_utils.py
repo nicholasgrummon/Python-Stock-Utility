@@ -4,6 +4,7 @@ import utils
 
 # import data handling libraries
 import os
+import logging
 import pandas as pd
 import yfinance as yf
 
@@ -11,6 +12,8 @@ import yfinance as yf
 from datetime import datetime, timedelta
 from dateutil import parser as date_parser
 import pytz
+
+logger = logging.getLogger(__name__)
 
 SAVEFILE_HEADER = ["Datetime","Open","High","Low","Close","Volume","Dividends","Stock Splits","Capital Gains"]
 NYC = pytz.timezone("America/New_York")
@@ -75,6 +78,23 @@ def _dedup_file(savefile_path):
     return 0
 
 
+def _ensure_trailing_newline(path):
+    """
+    Guards a mode='a' write from gluing onto an incomplete last line — e.g. if the
+    process was killed mid-write and the file's last line has no trailing newline.
+    This exact scenario silently corrupted Historical/1m_history/XOM.csv (two rows
+    merged into one 15-field line) which then made every ticker after XOM in the
+    watchlist fail to update for weeks, since _dedup_file's read of the whole file
+    threw on the malformed row and the exception aborted the rest of the loop.
+    """
+    if not os.path.exists(path) or os.path.getsize(path) == 0:
+        return
+    with open(path, "rb+") as f:
+        f.seek(-1, os.SEEK_END)
+        if f.read(1) != b"\n":
+            f.write(b"\n")
+
+
 def update_savefiles(base_dir, watchlist_df, default_period=365, printout=False):
     '''
     Collect historical data for specified stock.
@@ -88,22 +108,23 @@ def update_savefiles(base_dir, watchlist_df, default_period=365, printout=False)
             savefolder_path = os.path.join(base_dir, f"Historical/{interval}_history")
             savefile_path = os.path.join(savefolder_path, f"{ticker}.csv")
 
-            stock = yf.Ticker(ticker)
-            start_search_dt = get_start_search(savefile_path, default_period)
-            data = get_yf_data(stock, start_search_dt, interval)
-            if data.empty:
-                continue
-            data.to_csv(savefile_path, mode='a', index=False, header=False)
-            # Safety net: deduplicate after each write to catch any timezone or
-            # yfinance edge cases before they accumulate
-            removed = _dedup_file(savefile_path)
-            if removed:
-                import logging
-                logging.getLogger(__name__).warning(
-                    f"{ticker} {interval}: removed {removed} duplicate rows after write"
-                )
-            if printout:
-                print(f"{ticker} - {interval} data updated")
+            try:
+                stock = yf.Ticker(ticker)
+                start_search_dt = get_start_search(savefile_path, default_period)
+                data = get_yf_data(stock, start_search_dt, interval)
+                if data.empty:
+                    continue
+                _ensure_trailing_newline(savefile_path)
+                data.to_csv(savefile_path, mode='a', index=False, header=False)
+                # Safety net: deduplicate after each write to catch any timezone or
+                # yfinance edge cases before they accumulate
+                removed = _dedup_file(savefile_path)
+                if removed:
+                    logger.warning(f"{ticker} {interval}: removed {removed} duplicate rows after write")
+                if printout:
+                    print(f"{ticker} - {interval} data updated")
+            except Exception:
+                logger.exception(f"Failed to update {interval} history for {ticker}")
 
 
 def convert_savefiles_to_parquet(dirFilepath):

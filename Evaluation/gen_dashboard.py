@@ -140,13 +140,13 @@ tbody tr:hover td{background:var(--tbg)}
   <div class="home" id="homeView">
     <div class="slab">
       <span class="stitle">Buy / Sell Rating</span>
-      <span class="sdesc">0 = Sell · 10 = Strong Buy · Blends RSI, Bollinger %B and SMA20/50 spread as oversold/undervalued signals, damped by ADX trend strength</span>
+      <span class="sdesc">0 = Sell · 10 = Strong Buy · Blends RSI, Bollinger %B and SMA20/50 spread as oversold/undervalued signals, damped by ADX trend strength · Target/Stop is an ATR-scaled exit spread on BUY-tier ratings (rating ≥ 6), stop sized to half the target</span>
     </div>
     <div class="tbw" style="max-height:none">
       <table>
         <thead><tr>
           <th>Ticker</th><th>Close</th><th>Rating</th><th>Signal</th>
-          <th>RSI</th><th>%B</th><th>SMA 20</th><th>SMA 50</th><th>ADX</th>
+          <th>RSI</th><th>%B</th><th>SMA 20</th><th>SMA 50</th><th>ADX</th><th>Target</th><th>Stop</th>
         </tr></thead>
         <tbody id="hbd"></tbody>
       </table>
@@ -274,6 +274,33 @@ function rating(t){
   const val = Math.round(clamp(5 + (raw - 5)*conv, 0, 10) * 2) / 2;
   return {close, rsi, pctB, sma20, sma50, adx, val};
 }
+// Average True Range over the last 14 bars, as a % of the latest close — same
+// volatility measure Evaluation/rating_utils.atr_pct computes from the CSV.
+function atrPct(t, period=14){
+  const d = DATA[t], n = d.c.length;
+  if (n < period + 1) return null;
+  const tr = [];
+  for (let i = n - period; i < n; i++){
+    const hi = d.high[i], lo = d.low[i], pc = d.c[i-1];
+    if (hi == null || lo == null || pc == null) continue;
+    tr.push(Math.max(hi - lo, Math.abs(hi - pc), Math.abs(lo - pc)));
+  }
+  if (tr.length < period) return null;
+  const atr = tr.reduce((a,b) => a+b, 0) / tr.length;
+  const close = lastValid(d.c);
+  return close ? atr / close * 100 : null;
+}
+// Mirrors Evaluation/rating_utils.compute_targets — keep the two in sync.
+const CONF_MULT_MIN = 1.0, CONF_MULT_MAX = 2.8, RISK_REWARD_RATIO = 2.0;
+const MIN_UPSIDE_PCT = 1.0, MAX_UPSIDE_PCT = 12.0, MIN_DOWNSIDE_PCT = 0.6, MAX_DOWNSIDE_PCT = 6.0;
+function targets(val, atr){
+  if (val < 6 || atr == null) return {upside: null, downside: null};
+  const confidence = clamp((val - 6) / 4, 0, 1);
+  const multiplier = CONF_MULT_MIN + (CONF_MULT_MAX - CONF_MULT_MIN) * confidence;
+  const upside = clamp(atr * multiplier, MIN_UPSIDE_PCT, MAX_UPSIDE_PCT);
+  const downside = clamp(upside / RISK_REWARD_RATIO, MIN_DOWNSIDE_PCT, MAX_DOWNSIDE_PCT);
+  return {upside: Math.round(upside*10)/10, downside: Math.round(downside*10)/10};
+}
 function sigInfo(v){
   if (v >= 7.5) return {cls:'sb', lbl:'STRONG BUY'};
   if (v >= 6)   return {cls:'b',  lbl:'BUY'};
@@ -282,7 +309,12 @@ function sigInfo(v){
   return {cls:'ss', lbl:'STRONG SELL'};
 }
 function renderHome(){
-  const rows = TICKERS.map(t => ({t, ...rating(t)})).sort((a,b) => b.val - a.val);
+  const rows = TICKERS.map(t => {
+    const r = rating(t), atr = atrPct(t), tgt = targets(r.val, atr);
+    const targetPrice = tgt.upside != null ? r.close * (1 + tgt.upside/100) : null;
+    const stopPrice = tgt.downside != null ? r.close * (1 - tgt.downside/100) : null;
+    return {t, atr, ...r, ...tgt, targetPrice, stopPrice};
+  }).sort((a,b) => b.val - a.val);
   document.getElementById('hbd').innerHTML = rows.map(r => {
     const si = sigInfo(r.val), pct = clamp(r.val/10, 0, 1) * 100;
     const fillCol = r.val >= 5 ? 'var(--rg)' : 'var(--rb)';
@@ -296,6 +328,8 @@ function renderHome(){
       <td>${f$(r.sma20)}</td>
       <td>${f$(r.sma50)}</td>
       <td>${f1(r.adx)}</td>
+      <td>${r.targetPrice != null ? f$(r.targetPrice)+' (+'+r.upside.toFixed(1)+'%)' : '--'}</td>
+      <td>${r.stopPrice != null ? f$(r.stopPrice)+' (-'+r.downside.toFixed(1)+'%)' : '--'}</td>
     </tr>`;
   }).join('');
   document.querySelectorAll('.hrow').forEach(tr => tr.onclick = () => showTicker(tr.dataset.t));
@@ -598,6 +632,8 @@ def _load_ticker(csv_path):
     return dict(
         d=[str(x)[:10] for x in df["Datetime"]],
         c=[_nan_to_none(v) for v in df["Close"]],
+        high=[_nan_to_none(v) for v in df["High"]],
+        low=[_nan_to_none(v) for v in df["Low"]],
         s20=[_nan_to_none(v) for v in df["SMA20"]],
         s50=[_nan_to_none(v) for v in df["SMA50"]],
         rsi=[_nan_to_none(v) for v in df["RSI14"]],

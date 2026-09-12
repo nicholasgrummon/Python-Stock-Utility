@@ -101,24 +101,42 @@ def _fmt_dollar(v):
 def format_alert(rating):
     """Single-ticker message for a Strong Buy / Strong Sell tier transition."""
     r = rating
-    return (
+    lines = [
         f"**{r['ticker']}** just became a **{r['tier']}** (rating {r['rating']:.1f}/10) "
         f"— Close ${r['close']:.2f}, RSI {_fmt(r['rsi'])}, "
         f"SMA20 {_fmt_dollar(r['sma20'])}, SMA50 {_fmt_dollar(r['sma50'])}, ADX {_fmt(r['adx'])}"
-    )
+    ]
+    if r.get("upside_pct") is not None:
+        lines.append(f"Target: {_fmt_dollar(r['target_price'])} (+{r['upside_pct']:.1f}%)")
+        lines.append(f"Stop: {_fmt_dollar(r['stop_price'])} (-{r['downside_pct']:.1f}%)")
+    return "\n".join(lines)
 
 
 def format_ratings_table(ratings, title):
-    """Ratings table for `ratings` (sorted best-to-worst) under a bold `title` line."""
+    """Ratings table for `ratings` (sorted best-to-worst) under a bold `title` line.
+
+    TARGET/STOP are only populated for BUY-tier ratings (rating >= 6) — see
+    Evaluation/rating_utils.compute_targets.
+    """
     header = f"**{title}**"
     if not ratings:
         return f"{header}\nNo indicator data available yet."
 
-    lines = [f"{'TICKER':<7}{'CLOSE':>9}{'RATING':>8}  {'SIGNAL':<12}{'RSI':>6}{'ADX':>6}"]
+    lines = [
+        f"{'TICKER':<7}{'CLOSE':>9}{'RATING':>8}  {'SIGNAL':<12}{'RSI':>6}{'ADX':>6}  {'TARGET':>18}{'STOP':>18}"
+    ]
     for r in ratings:
+        target = (
+            f"{_fmt_dollar(r['target_price'])} (+{r['upside_pct']:.1f}%)"
+            if r.get("upside_pct") is not None else "--"
+        )
+        stop = (
+            f"{_fmt_dollar(r['stop_price'])} (-{r['downside_pct']:.1f}%)"
+            if r.get("downside_pct") is not None else "--"
+        )
         lines.append(
             f"{r['ticker']:<7}{_fmt_dollar(r['close']):>9}{r['rating']:>7.1f}  "
-            f"{r['tier']:<12}{_fmt(r['rsi']):>6}{_fmt(r['adx']):>6}"
+            f"{r['tier']:<12}{_fmt(r['rsi']):>6}{_fmt(r['adx']):>6}  {target:>18}{stop:>18}"
         )
     table = "\n".join(lines)
     return f"{header}\n```\n{table}\n```"

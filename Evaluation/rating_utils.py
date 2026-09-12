@@ -2,8 +2,8 @@
 Buy/sell rating (0-10) for each ticker, computed from the same indicator CSVs
 that back Evaluation/indicator_dashboard.html.
 
-Mirrors the `rating()` function in Evaluation/gen_dashboard.py's dashboard JS —
-keep the two in sync if the formula changes.
+Mirrors the `rating()`/`targets()` functions in Evaluation/gen_dashboard.py's
+dashboard JS — keep the two in sync if either formula changes.
 """
 import logging
 from pathlib import Path
@@ -14,6 +14,24 @@ logger = logging.getLogger(__name__)
 RSI_WEIGHT = 0.4
 BB_WEIGHT  = 0.3
 SMA_WEIGHT = 0.3
+
+ATR_PERIOD = 14
+
+# Exit spread for BUY-tier ratings (rating >= 6): upside is ATR * a multiplier
+# that scales UP directly with confidence — from CONF_MULT_MIN at a bare BUY
+# (rating 6) to CONF_MULT_MAX at a perfect 10 — not a fixed base multiplier
+# scaled down by a 0-1 fraction, which buried how big the multiplier actually
+# gets and made a "good" signal look barely different from a "bad" one.
+# Downside is always half the upside ("risk half of what you want to gain")
+# rather than its own independent ATR multiple — pinning it to ATR directly
+# let low-confidence signals on volatile tickers risk *more* than they
+# targeted to gain, since only the upside side scaled with confidence.
+# 1.0 -> 2.8 puts a typically-volatile stock (ATR ~3%) at ~2.0x (~6% upside)
+# around rating 8-8.5, and further out (~2.8x, ~8.4%) at a perfect 10.
+CONF_MULT_MIN, CONF_MULT_MAX = 1.0, 2.8
+RISK_REWARD_RATIO = 2.0
+MIN_UPSIDE_PCT, MAX_UPSIDE_PCT = 1.0, 12.0
+MIN_DOWNSIDE_PCT, MAX_DOWNSIDE_PCT = 0.6, 6.0
 
 
 def _clamp(v, lo, hi):
@@ -48,6 +66,45 @@ def compute_rating(close, sma20, sma50, rsi, bbl, bbu, adx):
     val = _clamp(5 + (raw - 5) * conv, 0, 10)
 
     return round(val * 2) / 2
+
+
+def atr_pct(df, period=ATR_PERIOD):
+    """
+    Average True Range as a % of the latest close — the volatility measure used
+    to scale exit targets. Computed on-demand from the High/Low/Close columns
+    already stored in the indicator CSV, no separate ATR column needed.
+    """
+    df = df.tail(period * 3)
+    high, low, close = df["High"], df["Low"], df["Close"]
+    prev_close = close.shift(1)
+    tr = pd.concat([high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
+    tr = tr.dropna()
+    if len(tr) < period:
+        return None
+
+    last_close = _last_valid(close)
+    atr = tr.tail(period).mean()
+    if last_close is None or not last_close or pd.isna(atr):
+        return None
+
+    return float(atr / last_close * 100)
+
+
+def compute_targets(rating, atr):
+    """
+    Upside/downside exit spread (in %) for a BUY-tier rating.
+    Returns (upside_pct, downside_pct), or (None, None) below the BUY threshold
+    or when ATR can't be computed (not enough history yet).
+    """
+    if rating < 6 or atr is None:
+        return None, None
+
+    confidence = _clamp((rating - 6) / 4, 0.0, 1.0)
+    multiplier = CONF_MULT_MIN + (CONF_MULT_MAX - CONF_MULT_MIN) * confidence
+    upside = _clamp(atr * multiplier, MIN_UPSIDE_PCT, MAX_UPSIDE_PCT)
+    downside = _clamp(upside / RISK_REWARD_RATIO, MIN_DOWNSIDE_PCT, MAX_DOWNSIDE_PCT)
+
+    return round(upside, 1), round(downside, 1)
 
 
 def tier(value):
@@ -87,9 +144,16 @@ def rating_for_ticker(ticker, base_dir):
     value = compute_rating(close, sma20, sma50, rsi, bbl, bbu, adx)
     pct_b = (close - bbl) / (bbu - bbl) if (bbl is not None and bbu is not None and bbu > bbl) else None
 
+    atr = atr_pct(df)
+    upside_pct, downside_pct = compute_targets(value, atr)
+    target_price = close * (1 + upside_pct / 100) if upside_pct is not None else None
+    stop_price = close * (1 - downside_pct / 100) if downside_pct is not None else None
+
     return dict(
         ticker=ticker, close=close, rating=value, tier=tier(value),
         rsi=rsi, sma20=sma20, sma50=sma50, adx=adx, pct_b=pct_b,
+        atr_pct=atr, upside_pct=upside_pct, downside_pct=downside_pct,
+        target_price=target_price, stop_price=stop_price,
     )
 
 

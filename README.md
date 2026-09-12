@@ -31,6 +31,8 @@ Contains helper functions for calculating technical indicators and combining the
 #### ./Evaluation/rating_utils.py
 Reads each ticker's indicator CSV and blends RSI, Bollinger %B, and SMA20/50 spread into a continuous 0 (Sell) - 10 (Strong Buy) rating, damped by ADX trend strength — the same formula used by the dashboard's Home page. `tier(value)` maps the rating to STRONG BUY/BUY/HOLD/SELL/STRONG SELL, which is what drives Discord alerts.
 
+For BUY-tier ratings (rating >= 6), `compute_targets` also derives an exit spread: upside is ATR14% (True Range, computed on the fly from the indicator CSV's High/Low/Close — no extra column needed) times a multiplier that scales directly from 1.0x at a bare BUY (rating 6) up to 2.8x at a perfect 10, so a STRONG BUY reaches meaningfully further than a bare BUY, not just marginally; downside is always half the upside ("risk half of what you want to gain"), not its own independent volatility multiple — pinning it to ATR directly let low-confidence signals on volatile tickers risk more than they targeted to gain. Both are floored/capped (1-12% upside, 0.6-6% downside) so illiquid low-vol tickers don't get a meaningless sub-1% spread and volatile ones don't blow past a sane cap. Mirrored in the dashboard's JS (`atrPct`/`targets` in `gen_dashboard.py`) and shown as Target/Stop columns on the Home page, in the weekly Discord summary, and in STRONG BUY alert messages.
+
 #### ./Historical/hist_utils.py
 Contains helper functions for maintaining history data save files. Updates existing save file or creates new file with max period if no history found
 
