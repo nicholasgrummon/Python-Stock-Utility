@@ -54,6 +54,9 @@ def load_holdings(base_dir):
 # Or install Deploy/psu.service as a systemd user service for managed restarts
 def main():
     last_tiers = {}
+    last_live_tiers = {}
+    last_short_tiers = {}
+    last_live_short_tiers = {}
 
     while True:
         wait_time = utils.seconds_until_market_open(NYSE)
@@ -72,6 +75,9 @@ def main():
                 gen_dash.generate_dashboard(BASE_DIR)
 
             discord_utils.check_rating_alerts(BASE_DIR, tickers, NOTIFIER, last_tiers, holdings)
+            discord_utils.check_live_rating_alerts(BASE_DIR, tickers, NOTIFIER, last_live_tiers, holdings)
+            discord_utils.check_short_alerts(BASE_DIR, tickers, NOTIFIER, last_short_tiers)
+            discord_utils.check_live_short_alerts(BASE_DIR, tickers, NOTIFIER, last_live_short_tiers)
             discord_utils.maybe_send_weekly_summary(BASE_DIR, tickers, NOTIFIER)
 
         except Exception:

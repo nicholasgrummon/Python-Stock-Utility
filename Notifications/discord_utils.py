@@ -98,17 +98,33 @@ def _fmt_dollar(v):
     return f"${v:.2f}" if v is not None else "--"
 
 
-def format_alert(rating):
+def format_alert(rating, live=False):
     """Single-ticker message for a Strong Buy / Strong Sell tier transition."""
     r = rating
+    tag = " (intraday)" if live else ""
     lines = [
-        f"**{r['ticker']}** just became a **{r['tier']}** (rating {r['rating']:.1f}/10) "
+        f"**{r['ticker']}** just became a **{r['tier']}**{tag} (rating {r['rating']:.1f}/10) "
         f"— Close ${r['close']:.2f}, RSI {_fmt(r['rsi'])}, "
         f"SMA20 {_fmt_dollar(r['sma20'])}, SMA50 {_fmt_dollar(r['sma50'])}, ADX {_fmt(r['adx'])}"
     ]
     if r.get("upside_pct") is not None:
         lines.append(f"Target: {_fmt_dollar(r['target_price'])} (+{r['upside_pct']:.1f}%)")
         lines.append(f"Stop: {_fmt_dollar(r['stop_price'])} (-{r['downside_pct']:.1f}%)")
+    return "\n".join(lines)
+
+
+def format_short_alert(rating, live=False):
+    """Single-ticker message for a Strong Sell tier transition, framed as a short entry."""
+    r = rating
+    tag = " (intraday)" if live else ""
+    lines = [
+        f"**{r['ticker']}** just became a **{r['tier']}**{tag} (rating {r['rating']:.1f}/10) "
+        f"— potential SHORT entry — Close ${r['close']:.2f}, RSI {_fmt(r['rsi'])}, "
+        f"SMA20 {_fmt_dollar(r['sma20'])}, SMA50 {_fmt_dollar(r['sma50'])}, ADX {_fmt(r['adx'])}"
+    ]
+    if r.get("short_profit_pct") is not None:
+        lines.append(f"Target: {_fmt_dollar(r['short_target_price'])} (-{r['short_profit_pct']:.1f}%)")
+        lines.append(f"Stop: {_fmt_dollar(r['short_stop_price'])} (+{r['short_stop_pct']:.1f}%)")
     return "\n".join(lines)
 
 
@@ -210,3 +226,101 @@ def check_rating_alerts(base_dir, tickers, notifier, last_tiers, holdings=None):
 
         logger.info(f"{t}: rating tier -> {r['tier']} ({r['rating']:.1f}/10)")
         notifier.send_message(format_alert(r))
+
+
+def check_live_rating_alerts(base_dir, tickers, notifier, last_tiers, holdings=None):
+    """
+    Same as check_rating_alerts, but sourced from rating_utils.rating_for_ticker_live,
+    which splices today's accumulated 1m bars into the rating calculation so it can
+    catch a tier crossing intraday rather than waiting for the daily bar to close.
+    This is expected to be noisy -- a tier can flip back and forth well before end of
+    day -- pair with the target/stop prices in the alert rather than trading tier
+    flips alone.
+
+    `last_tiers` should be a dict owned separately from check_rating_alerts's, since
+    the two are computed from different data and would otherwise stomp on each
+    other's transition tracking.
+    """
+    for t in tickers:
+        try:
+            r = rating_utils.rating_for_ticker_live(t, base_dir)
+        except Exception:
+            logger.exception(f"Failed to compute live rating for {t}")
+            continue
+        if r is None:
+            continue
+
+        prev_tier = last_tiers.get(t)
+        last_tiers[t] = r["tier"]
+
+        if r["tier"] == prev_tier:
+            continue
+        if r["tier"] not in ("STRONG BUY", "STRONG SELL"):
+            continue
+        if r["tier"] == "STRONG SELL" and holdings is not None and t not in holdings:
+            continue
+
+        logger.info(f"{t}: live rating tier -> {r['tier']} ({r['rating']:.1f}/10)")
+        notifier.send_message(format_alert(r, live=True))
+
+
+def check_short_alerts(base_dir, tickers, notifier, last_tiers):
+    """
+    Short-entry mirror of check_rating_alerts: alerts on any transition into
+    STRONG SELL, formatted as a short-entry signal via format_short_alert rather
+    than the close-your-long wording in format_alert. Fires unconditionally for
+    any watchlisted ticker -- like the STRONG BUY branch of check_rating_alerts --
+    since opening a short doesn't require an existing holding, unlike that
+    function's STRONG SELL branch, which is gated on `holdings` because it means
+    "close what you're long".
+
+    `last_tiers` must be a dict owned separately from check_rating_alerts's (and
+    check_live_short_alerts's), since sharing one would let whichever call updates
+    it first mask the other's transition tracking.
+    """
+    for t in tickers:
+        try:
+            r = rating_utils.rating_for_ticker(t, base_dir)
+        except Exception:
+            logger.exception(f"Failed to compute rating for {t}")
+            continue
+        if r is None:
+            continue
+
+        prev_tier = last_tiers.get(t)
+        last_tiers[t] = r["tier"]
+
+        if r["tier"] == prev_tier or r["tier"] != "STRONG SELL":
+            continue
+
+        logger.info(f"{t}: short signal -> {r['tier']} ({r['rating']:.1f}/10)")
+        notifier.send_message(format_short_alert(r))
+
+
+def check_live_short_alerts(base_dir, tickers, notifier, last_tiers):
+    """
+    Same as check_short_alerts, but sourced from rating_utils.rating_for_ticker_live
+    -- see check_live_rating_alerts for why this reacts intraday rather than waiting
+    for the daily bar to close.
+
+    `last_tiers` should be a dict owned separately from check_short_alerts's, for
+    the same reason check_live_rating_alerts's is kept separate from
+    check_rating_alerts's.
+    """
+    for t in tickers:
+        try:
+            r = rating_utils.rating_for_ticker_live(t, base_dir)
+        except Exception:
+            logger.exception(f"Failed to compute live rating for {t}")
+            continue
+        if r is None:
+            continue
+
+        prev_tier = last_tiers.get(t)
+        last_tiers[t] = r["tier"]
+
+        if r["tier"] == prev_tier or r["tier"] != "STRONG SELL":
+            continue
+
+        logger.info(f"{t}: live short signal -> {r['tier']} ({r['rating']:.1f}/10)")
+        notifier.send_message(format_short_alert(r, live=True))

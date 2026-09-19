@@ -5,9 +5,13 @@ that back Evaluation/indicator_dashboard.html.
 Mirrors the `rating()`/`targets()` functions in Evaluation/gen_dashboard.py's
 dashboard JS — keep the two in sync if either formula changes.
 """
+import sys
 import logging
 from pathlib import Path
 import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+import Evaluation.indicator_utils as ind_utils
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +111,27 @@ def compute_targets(rating, atr):
     return round(upside, 1), round(downside, 1)
 
 
+def compute_short_targets(rating, atr):
+    """
+    Profit-target/stop spread (in %) for a SELL-tier rating -- the short-side
+    mirror of compute_targets. Confidence rises as the rating falls toward 0
+    (strongest sell) instead of rising toward 10, since 2.5 is the SELL
+    threshold rather than 6; the multiplier/clamp/risk-reward math is otherwise
+    identical, just applied against the downside.
+    Returns (profit_pct, stop_pct), or (None, None) above the SELL threshold
+    or when ATR can't be computed (not enough history yet).
+    """
+    if rating > 2.5 or atr is None:
+        return None, None
+
+    confidence = _clamp((2.5 - rating) / 2.5, 0.0, 1.0)
+    multiplier = CONF_MULT_MIN + (CONF_MULT_MAX - CONF_MULT_MIN) * confidence
+    profit = _clamp(atr * multiplier, MIN_UPSIDE_PCT, MAX_UPSIDE_PCT)
+    stop = _clamp(profit / RISK_REWARD_RATIO, MIN_DOWNSIDE_PCT, MAX_DOWNSIDE_PCT)
+
+    return round(profit, 1), round(stop, 1)
+
+
 def tier(value):
     """Maps a 0-10 rating to a discrete signal tier."""
     if value >= 7.5:
@@ -118,6 +143,28 @@ def tier(value):
     if value >= 2.5:
         return "SELL"
     return "STRONG SELL"
+
+
+def _build_rating(ticker, close, sma20, sma50, rsi, bbl, bbu, adx, atr):
+    value = compute_rating(close, sma20, sma50, rsi, bbl, bbu, adx)
+    pct_b = (close - bbl) / (bbu - bbl) if (bbl is not None and bbu is not None and bbu > bbl) else None
+
+    upside_pct, downside_pct = compute_targets(value, atr)
+    target_price = close * (1 + upside_pct / 100) if upside_pct is not None else None
+    stop_price = close * (1 - downside_pct / 100) if downside_pct is not None else None
+
+    short_profit_pct, short_stop_pct = compute_short_targets(value, atr)
+    short_target_price = close * (1 - short_profit_pct / 100) if short_profit_pct is not None else None
+    short_stop_price = close * (1 + short_stop_pct / 100) if short_stop_pct is not None else None
+
+    return dict(
+        ticker=ticker, close=close, rating=value, tier=tier(value),
+        rsi=rsi, sma20=sma20, sma50=sma50, adx=adx, pct_b=pct_b,
+        atr_pct=atr, upside_pct=upside_pct, downside_pct=downside_pct,
+        target_price=target_price, stop_price=stop_price,
+        short_profit_pct=short_profit_pct, short_stop_pct=short_stop_pct,
+        short_target_price=short_target_price, short_stop_price=short_stop_price,
+    )
 
 
 def rating_for_ticker(ticker, base_dir):
@@ -140,20 +187,28 @@ def rating_for_ticker(ticker, base_dir):
     bbl   = _last_valid(df["BB_Lower"])
     bbu   = _last_valid(df["BB_Upper"])
     adx   = _last_valid(df["ADX14"])
+    atr   = atr_pct(df)
 
-    value = compute_rating(close, sma20, sma50, rsi, bbl, bbu, adx)
-    pct_b = (close - bbl) / (bbu - bbl) if (bbl is not None and bbu is not None and bbu > bbl) else None
+    return _build_rating(ticker, close, sma20, sma50, rsi, bbl, bbu, adx, atr)
 
-    atr = atr_pct(df)
-    upside_pct, downside_pct = compute_targets(value, atr)
-    target_price = close * (1 + upside_pct / 100) if upside_pct is not None else None
-    stop_price = close * (1 - downside_pct / 100) if downside_pct is not None else None
 
-    return dict(
-        ticker=ticker, close=close, rating=value, tier=tier(value),
-        rsi=rsi, sma20=sma20, sma50=sma50, adx=adx, pct_b=pct_b,
-        atr_pct=atr, upside_pct=upside_pct, downside_pct=downside_pct,
-        target_price=target_price, stop_price=stop_price,
+def rating_for_ticker_live(ticker, base_dir):
+    """
+    Same as rating_for_ticker, but sourced from indicator_utils.compute_live_row,
+    which splices today's accumulated 1m bars in as the day's still-open bar. Reacts
+    to intraday price swings the same loop tick they happen, well before the daily
+    bar closes and the "confirmed" rating from rating_for_ticker updates -- expect
+    this to be noisier/whipsaw more than the EOD rating, especially early in the
+    session when today's bar reflects only a few minutes of trading.
+    """
+    live = ind_utils.compute_live_row(ticker, base_dir)
+    if live is None:
+        return None
+
+    atr = atr_pct(live["frame"])
+    return _build_rating(
+        ticker, live["close"], live["sma20"], live["sma50"], live["rsi14"],
+        live["bbl"], live["bbu"], live["adx14"], atr,
     )
 
 

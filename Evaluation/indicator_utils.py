@@ -1,7 +1,9 @@
 import sys
 import logging
 import pandas as pd
+import pytz
 from pathlib import Path
+from datetime import datetime
 from dateutil import parser as date_parser
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -19,6 +21,8 @@ INDICATOR_HEADER = [
 # Rolling window size for incremental computation. ADX(14) needs 2*14+14=42 bars
 # to produce a value; 80 gives comfortable convergence without loading full history.
 INDICATOR_LOOKBACK = 80
+
+NYC = pytz.timezone("America/New_York")
 
 
 def _get_last_indicator_dt(ind_path):
@@ -46,6 +50,62 @@ def _compute_row(close, high, low):
     adx14 = adx_list[-1] if adx_list else None
 
     return sma20, sma50, rsi14, bbl, bbm, bbu, adx14
+
+
+def compute_live_row(ticker, base_dir):
+    """
+    Splices today's accumulated 1m bars in as a stand-in for the not-yet-closed daily
+    bar, so SMA/RSI/BB/ADX react to the live intraday price instead of waiting for
+    tomorrow's daily bar to land (1d_history's own "today" row, if present, is just a
+    frozen snapshot from whenever it was first observed today -- see get_yf_data's
+    strict `>` filter -- so it's excluded here rather than reused).
+
+    Returns a dict with the live close/high/low, the resulting indicator values, and
+    the High/Low/Close frame used (so callers can run ATR off the same series), or
+    None if there isn't a closed-day backdrop or any 1m data for today yet.
+    """
+    base_dir = Path(base_dir)
+    hist_path = base_dir / "Historical" / "1d_history" / f"{ticker}.csv"
+    intraday_path = base_dir / "Historical" / "1m_history" / f"{ticker}.csv"
+    if not hist_path.exists() or not intraday_path.exists():
+        return None
+
+    hist_df = pd.read_csv(hist_path)
+    if hist_df.empty or "Close" not in hist_df.columns:
+        return None
+    hist_df.drop_duplicates(subset="Datetime", keep="last", inplace=True)
+    hist_df["_dt"] = pd.to_datetime(hist_df["Datetime"], utc=True)
+
+    today = datetime.now(NYC).date()
+    closed_mask = hist_df["_dt"].dt.tz_convert(NYC).dt.date < today
+    closed_df = hist_df[closed_mask].tail(INDICATOR_LOOKBACK - 1)
+    if closed_df.empty:
+        return None
+
+    intraday_df = pd.read_csv(intraday_path)
+    if intraday_df.empty or "Close" not in intraday_df.columns:
+        return None
+    intraday_df["_dt"] = pd.to_datetime(intraday_df["Datetime"], utc=True)
+    today_bars = intraday_df[intraday_df["_dt"].dt.tz_convert(NYC).dt.date == today]
+    if today_bars.empty:
+        return None
+
+    live_close = float(today_bars["Close"].iloc[-1])
+    live_high = float(today_bars["High"].max())
+    live_low = float(today_bars["Low"].min())
+
+    close = closed_df["Close"].tolist() + [live_close]
+    high = closed_df["High"].tolist() + [live_high]
+    low = closed_df["Low"].tolist() + [live_low]
+
+    sma20, sma50, rsi14, bbl, bbm, bbu, adx14 = _compute_row(close, high, low)
+
+    return dict(
+        close=live_close, high=live_high, low=live_low,
+        sma20=sma20, sma50=sma50, rsi14=rsi14,
+        bbl=bbl, bbm=bbm, bbu=bbu, adx14=adx14,
+        frame=pd.DataFrame({"High": high, "Low": low, "Close": close}),
+    )
 
 
 def _backlog_full(hist_df, ind_path):
